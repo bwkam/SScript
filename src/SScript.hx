@@ -77,7 +77,7 @@ class SScript
     public var privateAccess:Bool = true;
 
     /**
-        Gets set automatically if you use `package` in this script.
+        Package path of this script. Gets set automatically when you use `package`.
     **/
     public var packagePath(default, null):String = "";
 
@@ -112,6 +112,7 @@ class SScript
 
         parser = new Parser();
         parser.script = this;
+        @:privateAccess parser.setIntrp(interp);
         interp.setPsr(parser);
 
         if (preset)
@@ -283,7 +284,7 @@ class SScript
 
     /**
         Triggers itself when the script fails to execute.
-        Generally happens because of script errors.
+        Generally happens because of syntax errors.
 
         When triggered, calls the function named `errorThrow` (if exists) in the script.
         `errorThrow` must return `null` or nothing, if is not null it immediately stops itself from running
@@ -293,9 +294,12 @@ class SScript
     **/
     final public function error(err:Error)
     {
+        var oldTraces:String = '$traces';
+        traces = false;
         var call:Dynamic = call('errorThrow', [err]);
         if (call != null)
             throw '"errorThrow" must return null or nothing.';
+        traces = oldTraces == 'true' ? true : false;
         return call = null;
     }
 
@@ -398,13 +402,13 @@ class SScript
             script.set(key, obj);
     }
 
-    function setPackagePath(path:String):String
-    {
-        return packagePath = path;
-    }
-
 	function get_variables():Map<String, Dynamic> 
     {
 		return interp.variables;
 	}
+
+    function setPackagePath(p):String
+    {
+        return packagePath = p;
+    }
 }

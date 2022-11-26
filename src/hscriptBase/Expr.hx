@@ -45,7 +45,7 @@ enum Expr {
 #end
 	EConst( c : Const );
 	EIdent( v : String , ?isFinal : Bool );
-	EVar( n : String, ?t : CType, ?e : Expr , ?p : TrickyToken );
+	EVar( n : String, ?t : CType, ?e : Expr , ?p : TrickyToken , ?g : Array<String> );
 	EFinal( f : String , ?t : CType , ?e : Expr , ?p : TrickyToken );
 	EParent( e : Expr );
 	EBlock( e : Array<Expr> );
@@ -56,6 +56,7 @@ enum Expr {
 	EIf( cond : Expr, e1 : Expr, ?e2 : Expr );
 	EWhile( cond : Expr, e : Expr );
 	EFor( v : String, it : Expr, e : Expr );
+	ECoalesce(e1 : Expr , e2 : Expr , assign : Bool);
 	EBreak;
 	EContinue;
 	EFunction( args : Array<Argument>, e : Expr, ?name : String, ?ret : CType , ?p : TrickyToken );
@@ -70,7 +71,7 @@ enum Expr {
 	ESwitch( e : Expr, cases : Array<{ values : Array<Expr>, expr : Expr }>, ?defaultExpr : Expr);
 	EDoWhile( cond : Expr, e : Expr);
 	EUsing( op : Dynamic , n : String );
-	EImport( i : Dynamic, c : String );
+	EImport( i : Dynamic, c : String , ?ps : Array < Dynamic > );
 	EPackage( ?p : String );
 	EMeta( name : String, args : Array<Expr>, e : Expr );
 	ECheckType( e : Expr, t : CType );
@@ -127,7 +128,7 @@ enum Error {
 	ECustom( msg : String );
 	EInvalidFinal( ?v : String );
 	EUnexistingField( f : Dynamic , f2 : Dynamic );
-	ELowerCaseType( t : String );
+	EUnknownIdentifier( s : String );
 	EExpectedField( v : String );
 	EUpperCase( );
 }

@@ -20,10 +20,9 @@
  * DEALINGS IN THE SOFTWARE.
  */
 package hscriptBase;
-import haxe.display.JsonModuleTypes.JsonBinop;
 import haxe.PosInfos;
 import hscriptBase.Expr;
-import haxe.Constraints.IMap;
+import haxe.Constraints;
 
 private enum Stop {
 	SBreak;
@@ -35,7 +34,7 @@ class Interp {
 
 	#if haxe3
 	public var variables : Map<String,Dynamic>;
-	var locals : Map<String,{ r : Dynamic , ?isFinal : Bool , ?isInline : Bool }>;
+	var locals : Map<String,{ r : Dynamic , ?isFinal : Bool , ?isInline : Bool , ?t:Array<String> }>;
 	var binops : Map<String, Expr -> Expr -> Dynamic >;
 	#else
 	public var variables : Hash<Dynamic>;
@@ -45,7 +44,7 @@ class Interp {
 
 	var depth : Int;
 	var inTry : Bool;
-	var declared : Array<{ n : String, old : { r : Dynamic , ?isFinal : Bool , ?isInline : Bool } }>;
+	var declared : Array<{ n : String, old : { r : Dynamic , ?isFinal : Bool , ?isInline : Bool , ?t:Array<String> } }>;
 	var returnValue : Dynamic;
 
 	var parser : Parser;
@@ -64,6 +63,8 @@ class Interp {
 	{
 		return parser = p;
 	}
+
+	var resumeError:Bool;
 
 	public function new() {
 		#if haxe3
@@ -97,6 +98,7 @@ class Interp {
 		variables.set("Float", Float);
 		variables.set("String", String);
 		variables.set("Dynamic", Dynamic);
+		variables.set("Array", Array);
 	}
 
 	public function posInfos(): PosInfos {
@@ -106,6 +108,8 @@ class Interp {
 		#end
 		return cast { fileName : "hscript", lineNumber : 0 };
 	}
+
+	var inFunc : Bool = false;
 
 	function initOps() {
 		var me = this;
@@ -125,7 +129,6 @@ class Interp {
 		binops.set("<<",function(e1,e2) return me.expr(e1) << me.expr(e2));
 		binops.set(">>",function(e1,e2) return me.expr(e1) >> me.expr(e2));
 		binops.set(">>>",function(e1,e2) return me.expr(e1) >>> me.expr(e2));
-		binops.set("===",function(e1,e2) return true);
 		binops.set("==",function(e1,e2) return me.expr(e1) == me.expr(e2));
 		binops.set("!=",function(e1,e2) return me.expr(e1) != me.expr(e2));
 		binops.set(">=",function(e1,e2) return me.expr(e1) >= me.expr(e2));
@@ -148,6 +151,23 @@ class Interp {
 		assignOp(">>=",function(v1,v2) return v1 >> v2);
 		assignOp(">>>=",function(v1,v2) return v1 >>> v2);
 	}
+
+	function coalesce(e1,e2) : Dynamic
+	{
+		var me = this;
+		var e1=me.expr(e1);
+		var e2=me.expr(e2);
+		return e1 == null ? e2:e1;
+	}
+
+	function coalesce2(e1,e2) : Dynamic{
+		var me = this;
+		var expr1=e1;
+		var expr2=e2;
+		var e1=me.expr(e1);
+		return if (e1==null) assign(expr1,expr2) else e1;
+	}
+
 	function setVar( name : String, v : Dynamic ) {
 		variables.set(name, v);
 	}
@@ -160,9 +180,10 @@ class Interp {
 				return error(EInvalidFinal(id));
 			var l = locals.get(id);
 			if( l == null )
-				setVar(id,v)
-			else
-				l.r = v;
+				setVar(id,v);
+			else {
+					l.r = v;
+			}
 		case EField(e,f):
 			v = set(expr(e),f,v);
 		case EArray(e, index):
@@ -315,6 +336,7 @@ class Interp {
 	}
 
 	inline function error(e : #if hscriptPos ErrorDef #else Error #end, rethrow=false ) : Dynamic {
+		if (resumeError)return null;
 		#if hscriptPos var e = new Error(e, curExpr.pmin, curExpr.pmax, curExpr.origin, curExpr.line); #end
 		if( script.interp!=null&&script.active ) script.error(e);
 		if( rethrow ) this.rethrow(e) else throw e;
@@ -356,7 +378,7 @@ class Interp {
 			}
 		case EIdent(id):
 			return resolve(id);
-		case EVar(n,t,e,tc):
+		case EVar(n,t,e,tc,g):
 			if(trk!=null&&trk.v&&["privateField","inlineVar","publicField"].contains(trk.f))
 				error(EUnexpected(trk.n));
 			var pf = false;
@@ -364,13 +386,14 @@ class Interp {
 				pf=tc.f=="publicField"||tc.f=="inlineVar"||tc.f=="privateField";
 				pf=pf&&tc.v;
 			}
+			if(t!=null)
 			parser.checkType(variables,t);
 			if(!pf){
 			declared.push({ n : n, old : locals.get(n) });
-			locals.set(n,{ r : (e == null)?null:expr(e) , isFinal : false});}
+			locals.set(n,{ r : (e == null)?null:expr(e) , isFinal : false , isInline: null, t: g});}
 			else{
 				if(variables.exists(n))error(EDuplicate(n));
-				locals.set(n,{ r : (e == null)?null:expr(e) , isFinal : false});
+				locals.set(n,{ r : (e == null)?null:expr(e) , isFinal : false , isInline: null, t: g});
 				variables.set(n,e==null?null:expr(e));
 			}
 			return null;
@@ -382,9 +405,8 @@ class Interp {
 				pf=tc.f=="publicField"||tc.f=="inlineVar"||tc.f=="privateField";
 				pf=pf&&tc.v;
 			}
-			if(pf)
+			if(t!=null)
 			parser.checkType(variables,t);
-			else parser.checkType(locals,t);
 			if(!pf){
 			declared.push({ n : n, old : locals.get(n) });
 			locals.set(n,{ r : (e == null)?null:expr(e) , isFinal : true});
@@ -445,6 +467,10 @@ class Interp {
 				#else
 				return ~expr(e);
 				#end
+			case "cast":
+				return cast (expr(e));
+			case "untyped":
+				return untyped { expr(e); };
 			default:
 				error(EInvalidOp(op));
 			}
@@ -573,7 +599,11 @@ class Interp {
 
 			return null;
 		case EPackage(p):
-			@:privateAccess if(p!=null)script.setPackagePath(p);
+			if(p!=p.toLowerCase())
+				error(ECustom('Package path cannot have capital letters.'));
+			@:privateAccess script.setPackagePath(p==null?"":p);
+			if(trk!=null)
+				error(ECustom('Unexpected package'));
 			return null;
 		case EFunction(params,fexpr,name,_,t):
 			var trk1 = switch(#if hscriptPos fexpr.e #else e #end){
@@ -584,7 +614,7 @@ class Interp {
 					if(e!=null)for(e in e){
 						switch(#if hscriptPos e.e #else e #end){
 							case EVar(n,t,e,p):tr=p; break;
-							case EFinal(n,t,e,p):tr=p; break; break;
+							case EFinal(n,t,e,p):tr=p; break;
 							default: tr=null;
 						}
 					}
@@ -795,6 +825,8 @@ class Interp {
 			for( f in fl )
 				set(o,f.name,expr(f.e));
 			return o;
+		case ECoalesce(e1,e2,assign):
+			return if (assign) coalesce2(e1,e2) else coalesce(e1,e2);
 		case ETernary(econd,e1,e2):
 			return if( expr(econd) == true ) expr(e1) else expr(e2);
 		case ESwitch(e, cases, def):
@@ -916,18 +948,15 @@ class Interp {
 				}
 				else
 				{
+					@:noPrivateAccess
 					prop = Reflect.getProperty(o,f);
 				}
 
 				if(prop==null)
 				{
-					var field=switch(en){
-						case EIdent(v,f):v;
-						default:null;
-					}
-					error(EUnexistingField( field ,f ));
+					prop = Reflect.field(o,f);
 				}
-				else prop;
+				prop;
 			}
 			catch(e){
 				throw e;
